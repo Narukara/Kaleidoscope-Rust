@@ -1,0 +1,9 @@
+extern sin(a)
+
+def foo(a, b)
+    a + b
+
+def bar(x)
+    (x + 1) * 2
+
+bar(foo(1, 2))
