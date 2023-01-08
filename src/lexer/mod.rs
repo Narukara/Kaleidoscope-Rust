@@ -3,7 +3,7 @@ use std::{ops::Deref, str::Chars};
 use itertools::Itertools;
 
 #[derive(Debug)]
-pub enum BinaryOp {
+pub enum BinOp {
     Add,
     Sub,
     Multi,
@@ -14,12 +14,12 @@ pub enum BinaryOp {
 pub enum Token {
     Def,
     Extern,
-    Identifier(String),
-    Number(f64),
-    LeftParenthesis,
-    RightParenthesis,
+    Id(String),
+    Num(f64),
+    LParen,
+    RParen,
     Comma,
-    BinOp(BinaryOp),
+    BinOp(BinOp),
 }
 
 pub struct Lexer<'a> {
@@ -52,7 +52,7 @@ impl<'a> Iterator for Lexer<'a> {
                 match s.deref() {
                     "def" => Some(Token::Def),
                     "extern" => Some(Token::Extern),
-                    _ => Some(Token::Identifier(s)),
+                    _ => Some(Token::Id(s)),
                 }
             }
             Some(c) if c.is_numeric() || c == '.' => {
@@ -66,20 +66,20 @@ impl<'a> Iterator for Lexer<'a> {
                 let f: f64 = s.parse().unwrap_or_else(|e| {
                     panic!("{}: {}", e, s);
                 });
-                Some(Token::Number(f))
+                Some(Token::Num(f))
             }
             Some('#') => {
                 self.text.find(|&x| x == '\n' || x == '\r');
                 self.next()
             }
             Some(c) => match c {
-                '(' => Some(Token::LeftParenthesis),
-                ')' => Some(Token::RightParenthesis),
+                '(' => Some(Token::LParen),
+                ')' => Some(Token::RParen),
                 ',' => Some(Token::Comma),
-                '+' => Some(Token::BinOp(BinaryOp::Add)),
-                '-' => Some(Token::BinOp(BinaryOp::Sub)),
-                '*' => Some(Token::BinOp(BinaryOp::Multi)),
-                '<' => Some(Token::BinOp(BinaryOp::Less)),
+                '+' => Some(Token::BinOp(BinOp::Add)),
+                '-' => Some(Token::BinOp(BinOp::Sub)),
+                '*' => Some(Token::BinOp(BinOp::Multi)),
+                '<' => Some(Token::BinOp(BinOp::Less)),
                 c => panic!("invaild char: {}", c),
             },
         }

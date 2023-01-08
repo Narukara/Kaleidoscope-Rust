@@ -2,7 +2,7 @@ use std::iter::Peekable;
 
 mod lexer;
 
-use lexer::{BinaryOp, Lexer, Token};
+use lexer::{BinOp, Lexer, Token};
 
 pub struct Parser<'a> {
     lexer: Peekable<Lexer<'a>>,
@@ -15,19 +15,19 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn get_binop_precedence(b: &BinaryOp) -> i32 {
+    fn get_bin_op_precedence(b: &BinOp) -> i32 {
         match b {
-            BinaryOp::Add => 20,
-            BinaryOp::Sub => 20,
-            BinaryOp::Multi => 40,
-            BinaryOp::Less => 10,
+            BinOp::Add => 20,
+            BinOp::Sub => 20,
+            BinOp::Multi => 40,
+            BinOp::Less => 10,
         }
     }
 
     // number_expr ::= number
     fn parse_number(&mut self) -> ExprAST {
         match self.lexer.next() {
-            Some(Token::Number(f)) => ExprAST::Number(f),
+            Some(Token::Num(f)) => ExprAST::Num(f),
             _ => unreachable!(),
         }
     }
@@ -37,7 +37,7 @@ impl<'a> Parser<'a> {
         self.lexer.next(); // eat '('
         let e = self.parse_expr();
         match self.lexer.next() {
-            Some(Token::RightParenthesis) => e,
+            Some(Token::RParen) => e,
             t => panic!("expected ')', got {:?}", t),
         }
     }
@@ -46,30 +46,30 @@ impl<'a> Parser<'a> {
     //                 ::= id '(' expr* ')'
     fn parse_identifier(&mut self) -> ExprAST {
         let name = match self.lexer.next() {
-            Some(Token::Identifier(n)) => n,
+            Some(Token::Id(n)) => n,
             _ => unreachable!(),
         };
 
-        if let Some(Token::LeftParenthesis) = self.lexer.peek() {
+        if let Some(Token::LParen) = self.lexer.peek() {
             // function call
             self.lexer.next(); // eat '('
             let mut args = vec![];
-            if let Some(Token::RightParenthesis) = self.lexer.peek() {
+            if let Some(Token::RParen) = self.lexer.peek() {
                 self.lexer.next(); // eat ')'
             } else {
                 loop {
                     args.push(self.parse_expr());
                     match self.lexer.next() {
-                        Some(Token::RightParenthesis) => break,
+                        Some(Token::RParen) => break,
                         Some(Token::Comma) => (),
                         t => panic!("expected ')' or ',', got {:?}", t),
                     }
                 }
             }
-            ExprAST::CallExpr { func: name, args }
+            ExprAST::CallExpr { name, args }
         } else {
             // variable
-            ExprAST::Variable { name }
+            ExprAST::Var { name }
         }
     }
 
@@ -78,21 +78,21 @@ impl<'a> Parser<'a> {
     //         ::= parentheses_expr
     fn parse_primary(&mut self) -> ExprAST {
         match self.lexer.peek() {
-            Some(Token::Identifier(_)) => self.parse_identifier(),
-            Some(Token::LeftParenthesis) => self.parse_parentheses(),
-            Some(Token::Number(_)) => self.parse_number(),
+            Some(Token::Id(_)) => self.parse_identifier(),
+            Some(Token::LParen) => self.parse_parentheses(),
+            Some(Token::Num(_)) => self.parse_number(),
             t => panic!("expected expression, got: {:?}", t),
         }
     }
 
     // bin_op_rhs ::= ('+' primary)*
-    fn parse_bin_op_rhs(&mut self, expr_prec: i32, mut lhs: ExprAST) -> ExprAST {
+    fn parse_bin_op_rhs(&mut self, base_prec: i32, mut lhs: ExprAST) -> ExprAST {
         loop {
             let op_prec = match self.lexer.peek() {
-                Some(Token::BinOp(op)) => Self::get_binop_precedence(op),
+                Some(Token::BinOp(op)) => Self::get_bin_op_precedence(op),
                 _ => -1,
             };
-            if op_prec < expr_prec {
+            if base_prec > op_prec {
                 return lhs;
             }
             let op = match self.lexer.next() {
@@ -103,7 +103,7 @@ impl<'a> Parser<'a> {
             let mut rhs = self.parse_primary();
 
             let next_prec = match self.lexer.peek() {
-                Some(Token::BinOp(op)) => Self::get_binop_precedence(op),
+                Some(Token::BinOp(op)) => Self::get_bin_op_precedence(op),
                 _ => -1,
             };
 
@@ -111,10 +111,10 @@ impl<'a> Parser<'a> {
                 rhs = self.parse_bin_op_rhs(op_prec + 1, rhs);
             }
 
-            lhs = ExprAST::BinaryExpr {
-                left: Box::new(lhs),
+            lhs = ExprAST::BinExpr {
+                lhs: Box::new(lhs),
                 op,
-                right: Box::new(rhs),
+                rhs: Box::new(rhs),
             };
         }
     }
@@ -128,25 +128,25 @@ impl<'a> Parser<'a> {
     // prototype ::= id '(' id* ')'
     fn parse_prototype(&mut self) -> PrototypeAST {
         let name = match self.lexer.next() {
-            Some(Token::Identifier(n)) => n,
+            Some(Token::Id(n)) => n,
             _ => unreachable!(),
         };
 
         match self.lexer.next() {
-            Some(Token::LeftParenthesis) => (),
+            Some(Token::LParen) => (),
             t => panic!("expected '(', got {:?}", t),
         }
 
         let mut args = vec![];
         match self.lexer.next() {
-            Some(Token::RightParenthesis) => (),
-            Some(Token::Identifier(id)) => {
+            Some(Token::RParen) => (),
+            Some(Token::Id(id)) => {
                 args.push(id);
                 loop {
                     match self.lexer.next() {
-                        Some(Token::RightParenthesis) => break,
+                        Some(Token::RParen) => break,
                         Some(Token::Comma) => match self.lexer.next() {
-                            Some(Token::Identifier(id)) => args.push(id),
+                            Some(Token::Id(id)) => args.push(id),
                             t => panic!("expected identifier, got {:?}", t),
                         },
                         t => panic!("expected ')' or ',', got {:?}", t),
@@ -197,17 +197,17 @@ impl<'a> Parser<'a> {
 
 #[derive(Debug)]
 enum ExprAST {
-    Number(f64),
-    Variable {
+    Num(f64),
+    Var {
         name: String,
     },
-    BinaryExpr {
-        left: Box<ExprAST>,
-        op: BinaryOp,
-        right: Box<ExprAST>,
+    BinExpr {
+        lhs: Box<ExprAST>,
+        op: BinOp,
+        rhs: Box<ExprAST>,
     },
     CallExpr {
-        func: String,
+        name: String,
         args: Vec<ExprAST>,
     },
 }
@@ -236,8 +236,15 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
     fn parse_expr2() {
+        let s = "1+2*(3+4)+5*6";
+        let mut parser = Parser::new(s);
+        println!("{:?}", parser.parse_expr());
+    }
+
+    #[test]
+    #[should_panic]
+    fn parse_expr3() {
         let s = "9+fun(1*)";
         let mut parser = Parser::new(s);
         println!("{:?}", parser.parse_expr());
@@ -253,7 +260,7 @@ mod tests {
     #[test]
     #[should_panic]
     fn parse_proto2() {
-        let s = "fun(1)";
+        let s = "fun(a, (b))";
         let mut parser = Parser::new(s);
         println!("{:?}", parser.parse_prototype());
     }
