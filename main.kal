@@ -1,9 +1,9 @@
 extern sin(a)
 
 def foo(a, b)
-    a + b
+    a*a - 2*a*b + b*b
 
 def bar(x)
-    (x + 1) * 2
+    sin(foo(x,1))
 
-bar(foo(1, 2))
+bar(1) < 1

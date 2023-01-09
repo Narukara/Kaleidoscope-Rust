@@ -1,5 +1,5 @@
-use kaleidoscope::run;
+use kaleidoscope;
 
 fn main() {
-    run("main.kal");
+    kaleidoscope::run("main.kal");
 }

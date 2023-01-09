@@ -1,6 +1,12 @@
 use std::iter::Peekable;
 
-use inkwell::{builder::Builder, context::Context, module::Module, values::BasicValue};
+use inkwell::{
+    builder::Builder,
+    context::Context,
+    module::Module,
+    values::{BasicMetadataValueEnum, FloatValue},
+    FloatPredicate,
+};
 use lexer::{BinOp, Lexer, Token};
 
 mod lexer;
@@ -13,12 +19,6 @@ impl<'a> Parser<'a> {
     pub fn new(input: &str) -> Parser {
         Parser {
             lexer: Lexer::new(input).peekable(),
-        }
-    }
-
-    pub fn from(lexer: Lexer) -> Parser {
-        Parser {
-            lexer: lexer.peekable(),
         }
     }
 
@@ -241,18 +241,65 @@ pub struct FunctionAST {
 }
 
 impl ExprAST {
-    fn codegen(&self) -> &dyn BasicValue {
-        unimplemented!()
+    fn codegen<'a>(
+        &'a self,
+        context: &'a Context,
+        module: &Module<'a>,
+        builder: &'a Builder,
+        params: &Vec<FloatValue<'a>>,
+    ) -> FloatValue {
+        match self {
+            Self::Num(n) => context.f64_type().const_float(*n),
+            Self::Var { name } => *params
+                .iter()
+                .find(|&p| p.get_name().to_str().unwrap() == name)
+                .unwrap_or_else(|| panic!("undefined variable: {}", name)),
+            Self::BinExpr { lhs, op, rhs } => {
+                let lhs = lhs.codegen(context, module, builder, params);
+                let rhs = rhs.codegen(context, module, builder, params);
+                match op {
+                    BinOp::Add => builder.build_float_add(lhs, rhs, "sum"),
+                    BinOp::Sub => builder.build_float_sub(lhs, rhs, "diff"),
+                    BinOp::Multi => builder.build_float_mul(lhs, rhs, "prod"),
+                    BinOp::Less => {
+                        let temp =
+                            builder.build_float_compare(FloatPredicate::ULT, lhs, rhs, "temp");
+                        builder.build_unsigned_int_to_float(temp, context.f64_type(), "cmp")
+                    }
+                }
+            }
+            Self::CallExpr { name, args } => {
+                let func = module
+                    .get_function(name)
+                    .unwrap_or_else(|| panic!("undefined function: {}", name));
+                if func.count_params() as usize != args.len() {
+                    panic!("the number of parameters does not match");
+                }
+                let args: Vec<BasicMetadataValueEnum> = args
+                    .iter()
+                    .map(|a| a.codegen(context, module, builder, params).into())
+                    .collect();
+                builder
+                    .build_call(func, &args, "call")
+                    .try_as_basic_value()
+                    .left()
+                    .unwrap()
+                    .into_float_value()
+            }
+        }
     }
 }
 
 impl FunctionAST {
-    pub fn codegen<'a>(&self, context: &'a Context, module: &Module<'a>, builder: &Builder) {
+    pub fn codegen<'a>(&'a self, context: &'a Context, module: &Module<'a>, builder: &'a Builder) {
         let f64_t = context.f64_type();
         let fn_t = f64_t.fn_type(&vec![f64_t.into(); self.proto.args.len()], false);
         let func = module.add_function(&self.proto.name, fn_t, None);
 
-        let params = func.get_params();
+        let params: Vec<FloatValue> = func
+            .get_param_iter()
+            .map(|p| p.into_float_value())
+            .collect();
         for (i, p) in params.iter().enumerate() {
             p.set_name(&self.proto.args[i]);
         }
@@ -260,7 +307,7 @@ impl FunctionAST {
         if let Some(expr) = &self.body {
             let bb = context.append_basic_block(func, "entry");
             builder.position_at_end(bb);
-            builder.build_return(None);
+            builder.build_return(Some(&expr.codegen(context, module, builder, &params)));
         }
     }
 }

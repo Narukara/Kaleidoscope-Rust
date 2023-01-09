@@ -7,14 +7,15 @@ mod parser;
 
 pub fn run(file: &str) {
     let input = fs::read_to_string(file).unwrap();
-    let p = Parser::new(&input);
+    let parser = Parser::new(&input);
+    let func_ast: Vec<_> = parser.collect();
 
     let context = Context::create();
     let builder = context.create_builder();
     let module = context.create_module("main");
     module.set_source_file_name(file);
 
-    for f in p {
+    for f in &func_ast {
         f.codegen(&context, &module, &builder);
     }
 
