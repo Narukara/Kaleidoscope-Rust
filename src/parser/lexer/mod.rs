@@ -14,6 +14,7 @@ pub enum BinOp {
 pub enum Token {
     Def,
     Extern,
+    Find,
     Id(String),
     Num(f64),
     LParen,
@@ -52,6 +53,7 @@ impl<'a> Iterator for Lexer<'a> {
                 match s.deref() {
                     "def" => Some(Token::Def),
                     "extern" => Some(Token::Extern),
+                    "find" => Some(Token::Find),
                     _ => Some(Token::Id(s)),
                 }
             }
@@ -101,9 +103,7 @@ def fib(x)
     fib(x-1)+fib(x-2)
 
 # This expression will compute the 40th number.
-fib(40)
-
-(3.7+.9)*0.0 # hi
+find fib(40)
 ";
         let lexer = Lexer::new(s);
         for t in lexer {

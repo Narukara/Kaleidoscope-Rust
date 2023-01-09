@@ -1,0 +1,13 @@
+# Kaleidoscope (modified) source code
+
+# import from math lib
+extern sin(x)
+
+def foo(a, b)
+    a*a - 2*a*b + b*b
+
+def bar(x)
+    x
+
+# a expression to be evaluated, optional
+find sin(foo(2,bar(1)))

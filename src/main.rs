@@ -1,5 +1,11 @@
+use std::env;
+
 use kaleidoscope;
 
 fn main() {
-    kaleidoscope::run("main.kal");
+    if let Some(path) = env::args().nth(1) {
+        kaleidoscope::run(&path);
+    } else {
+        eprintln!("usage: cargo run xxx.kal");
+    }
 }

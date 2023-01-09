@@ -1,4 +1,4 @@
-use std::iter::Peekable;
+use std::{collections::HashSet, iter::Peekable};
 
 use inkwell::{
     builder::Builder,
@@ -10,6 +10,8 @@ use inkwell::{
 use lexer::{BinOp, Lexer, Token};
 
 mod lexer;
+
+pub const TARGET_FUNC_NAME: &str = "find";
 
 pub struct Parser<'a> {
     lexer: Peekable<Lexer<'a>>,
@@ -24,10 +26,10 @@ impl<'a> Parser<'a> {
 
     fn get_bin_op_precedence(b: &BinOp) -> i32 {
         match b {
+            BinOp::Less => 10,
             BinOp::Add => 20,
             BinOp::Sub => 20,
             BinOp::Multi => 40,
-            BinOp::Less => 10,
         }
     }
 
@@ -134,16 +136,19 @@ impl<'a> Parser<'a> {
 
     // prototype ::= id '(' id* ')'
     fn parse_prototype(&mut self) -> PrototypeAST {
+        // get function name
         let name = match self.lexer.next() {
             Some(Token::Id(n)) => n,
-            _ => unreachable!(),
+            t => panic!("expected identifier, got {:?}", t),
         };
 
+        // eat (
         match self.lexer.next() {
             Some(Token::LParen) => (),
             t => panic!("expected '(', got {:?}", t),
         }
 
+        // get parameters
         let mut args = vec![];
         match self.lexer.next() {
             Some(Token::RParen) => (),
@@ -161,6 +166,12 @@ impl<'a> Parser<'a> {
                 }
             }
             t => panic!("expected ')' or identifier, got {:?}", t),
+        }
+
+        // check for duplicate parameters
+        let mut set = HashSet::new();
+        if !args.iter().all(|a| set.insert(a)) {
+            panic!("duplicate parameters are not allowed, in function {}", name);
         }
 
         PrototypeAST { name, args }
@@ -184,10 +195,11 @@ impl<'a> Parser<'a> {
         FunctionAST { proto, body: None }
     }
 
-    // top_level_expr ::= expr
-    fn parse_top_level_expr(&mut self) -> FunctionAST {
+    // target ::= 'find' expr
+    fn parse_target(&mut self) -> FunctionAST {
+        self.lexer.next(); // eat find
         let proto = PrototypeAST {
-            name: String::new(),
+            name: String::from(TARGET_FUNC_NAME),
             args: vec![],
         };
         let body = self.parse_expr();
@@ -205,7 +217,8 @@ impl<'a> Iterator for Parser<'a> {
         match self.lexer.peek() {
             Some(Token::Extern) => Some(self.parse_extern()),
             Some(Token::Def) => Some(self.parse_func()),
-            Some(_) => Some(self.parse_top_level_expr()),
+            Some(Token::Find) => Some(self.parse_target()),
+            Some(t) => panic!("expect 'extern', 'def' or 'find', got {:?}", t),
             None => None,
         }
     }
@@ -273,7 +286,10 @@ impl ExprAST {
                     .get_function(name)
                     .unwrap_or_else(|| panic!("undefined function: {}", name));
                 if func.count_params() as usize != args.len() {
-                    panic!("the number of parameters does not match");
+                    panic!(
+                        "number of parameters does not match, in the call to function {}",
+                        name
+                    );
                 }
                 let args: Vec<BasicMetadataValueEnum> = args
                     .iter()
@@ -292,6 +308,9 @@ impl ExprAST {
 
 impl FunctionAST {
     pub fn codegen<'a>(&'a self, context: &'a Context, module: &Module<'a>, builder: &'a Builder) {
+        if module.get_function(&self.proto.name).is_some() {
+            panic!("duplicate definition of function: {}", self.proto.name);
+        }
         let f64_t = context.f64_type();
         let fn_t = f64_t.fn_type(&vec![f64_t.into(); self.proto.args.len()], false);
         let func = module.add_function(&self.proto.name, fn_t, None);

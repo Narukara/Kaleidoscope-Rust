@@ -1,9 +1,0 @@
-extern sin(a)
-
-def foo(a, b)
-    a*a - 2*a*b + b*b
-
-def bar(x)
-    sin(foo(x,1))
-
-bar(1) < 1
