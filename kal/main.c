@@ -1,12 +1,8 @@
 #include <stdio.h>
 
-extern double find();
-
-// double bar(double x) {
-//     return x;
-// }
+extern double _find();
 
 int main() {
-    printf("result = %lf\n", find());
+    printf("result = %lf\n", _find());
     return 0;
 }

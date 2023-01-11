@@ -15,6 +15,9 @@ pub enum Token {
     Def,
     Extern,
     Find,
+    If,
+    Then,
+    Else,
     Id(String),
     Num(f64),
     LParen,
@@ -54,6 +57,9 @@ impl<'a> Iterator for Lexer<'a> {
                     "def" => Some(Token::Def),
                     "extern" => Some(Token::Extern),
                     "find" => Some(Token::Find),
+                    "if" => Some(Token::If),
+                    "then" => Some(Token::Then),
+                    "else" => Some(Token::Else),
                     _ => Some(Token::Id(s)),
                 }
             }

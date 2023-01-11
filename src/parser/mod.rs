@@ -11,7 +11,7 @@ use lexer::{BinOp, Lexer, Token};
 
 mod lexer;
 
-pub const TARGET_FUNC_NAME: &str = "find";
+pub const TARGET_FUNC_NAME: &str = "_find";
 
 pub struct Parser<'a> {
     lexer: Peekable<Lexer<'a>>,
@@ -47,7 +47,7 @@ impl<'a> Parser<'a> {
         let e = self.parse_expr();
         match self.lexer.next() {
             Some(Token::RParen) => e,
-            t => panic!("expected ')', got {:?}", t),
+            t => panic!("expected ')', got '{:?}'", t),
         }
     }
 
@@ -71,7 +71,7 @@ impl<'a> Parser<'a> {
                     match self.lexer.next() {
                         Some(Token::RParen) => break,
                         Some(Token::Comma) => (),
-                        t => panic!("expected ')' or ',', got {:?}", t),
+                        t => panic!("expected ')' or ',', got '{:?}'", t),
                     }
                 }
             }
@@ -82,6 +82,23 @@ impl<'a> Parser<'a> {
         }
     }
 
+    // if_expr ::= 'if' expr 'then' expr 'else' expr
+    fn parse_if(&mut self) -> ExprAST {
+        self.lexer.next(); // eat 'if'
+        let cond = Box::new(self.parse_expr());
+        match self.lexer.next() {
+            Some(Token::Then) => (),
+            t => panic!("expected 'then', got '{:?}'", t),
+        }
+        let then = Box::new(self.parse_expr());
+        match self.lexer.next() {
+            Some(Token::Else) => (),
+            t => panic!("expected 'else', got '{:?}'", t),
+        }
+        let els = Box::new(self.parse_expr());
+        ExprAST::IfExpr { cond, then, els }
+    }
+
     // primary ::= number_expr
     //         ::= identifier_expr
     //         ::= parentheses_expr
@@ -90,7 +107,8 @@ impl<'a> Parser<'a> {
             Some(Token::Id(_)) => self.parse_identifier(),
             Some(Token::LParen) => self.parse_parentheses(),
             Some(Token::Num(_)) => self.parse_number(),
-            t => panic!("expected expression, got: {:?}", t),
+            Some(Token::If) => self.parse_if(),
+            t => panic!("expected expression, got: '{:?}'", t),
         }
     }
 
@@ -139,13 +157,13 @@ impl<'a> Parser<'a> {
         // get function name
         let name = match self.lexer.next() {
             Some(Token::Id(n)) => n,
-            t => panic!("expected identifier, got {:?}", t),
+            t => panic!("expected identifier, got '{:?}'", t),
         };
 
         // eat (
         match self.lexer.next() {
             Some(Token::LParen) => (),
-            t => panic!("expected '(', got {:?}", t),
+            t => panic!("expected '(', got '{:?}'", t),
         }
 
         // get parameters
@@ -159,19 +177,19 @@ impl<'a> Parser<'a> {
                         Some(Token::RParen) => break,
                         Some(Token::Comma) => match self.lexer.next() {
                             Some(Token::Id(id)) => args.push(id),
-                            t => panic!("expected identifier, got {:?}", t),
+                            t => panic!("expected identifier, got '{:?}'", t),
                         },
-                        t => panic!("expected ')' or ',', got {:?}", t),
+                        t => panic!("expected ')' or ',', got '{:?}'", t),
                     }
                 }
             }
-            t => panic!("expected ')' or identifier, got {:?}", t),
+            t => panic!("expected ')' or identifier, got '{:?}'", t),
         }
 
         // check for duplicate parameters
         let mut set = HashSet::new();
         if !args.iter().all(|a| set.insert(a)) {
-            panic!("duplicate parameters are not allowed, in function {}", name);
+            panic!("duplicate parameters are not allowed: function '{}'", name);
         }
 
         PrototypeAST { name, args }
@@ -218,7 +236,7 @@ impl<'a> Iterator for Parser<'a> {
             Some(Token::Extern) => Some(self.parse_extern()),
             Some(Token::Def) => Some(self.parse_func()),
             Some(Token::Find) => Some(self.parse_target()),
-            Some(t) => panic!("expect 'extern', 'def' or 'find', got {:?}", t),
+            Some(t) => panic!("expect 'extern', 'def' or 'find', got '{:?}'", t),
             None => None,
         }
     }
@@ -239,6 +257,11 @@ enum ExprAST {
         name: String,
         args: Vec<ExprAST>,
     },
+    IfExpr {
+        cond: Box<ExprAST>,
+        then: Box<ExprAST>,
+        els: Box<ExprAST>,
+    },
 }
 
 #[derive(Debug)]
@@ -254,6 +277,111 @@ pub struct FunctionAST {
 }
 
 impl ExprAST {
+    fn codegen_num(num: f64, context: &Context) -> FloatValue {
+        context.f64_type().const_float(num)
+    }
+
+    fn codegen_var<'a>(name: &str, params: &Vec<FloatValue<'a>>) -> FloatValue<'a> {
+        *params
+            .iter()
+            .find(|&p| p.get_name().to_str().unwrap() == name)
+            .unwrap_or_else(|| panic!("undefined variable: '{}'", name))
+    }
+
+    fn codegen_bin<'a>(
+        bin_expr: &'a ExprAST,
+        context: &'a Context,
+        module: &Module<'a>,
+        builder: &'a Builder,
+        params: &Vec<FloatValue<'a>>,
+    ) -> FloatValue<'a> {
+        let (lhs, op, rhs) = match bin_expr {
+            ExprAST::BinExpr { lhs, op, rhs } => (lhs, op, rhs),
+            _ => unreachable!(),
+        };
+        let lhs = lhs.codegen(context, module, builder, params);
+        let rhs = rhs.codegen(context, module, builder, params);
+        match op {
+            BinOp::Add => builder.build_float_add(lhs, rhs, "sum"),
+            BinOp::Sub => builder.build_float_sub(lhs, rhs, "diff"),
+            BinOp::Multi => builder.build_float_mul(lhs, rhs, "prod"),
+            BinOp::Less => {
+                let temp = builder.build_float_compare(FloatPredicate::ULT, lhs, rhs, "temp");
+                builder.build_unsigned_int_to_float(temp, context.f64_type(), "cmp")
+            }
+        }
+    }
+
+    fn codegen_call<'a>(
+        call_expr: &'a ExprAST,
+        context: &'a Context,
+        module: &Module<'a>,
+        builder: &'a Builder,
+        params: &Vec<FloatValue<'a>>,
+    ) -> FloatValue<'a> {
+        let (name, args) = match call_expr {
+            Self::CallExpr { name, args } => (name, args),
+            _ => unreachable!(),
+        };
+        let func = module
+            .get_function(name)
+            .unwrap_or_else(|| panic!("undefined function '{}'", name));
+        if func.count_params() as usize != args.len() {
+            panic!("number of parameters does not match: function '{}'", name);
+        }
+        let args: Vec<BasicMetadataValueEnum> = args
+            .iter()
+            .map(|a| a.codegen(context, module, builder, params).into())
+            .collect();
+        builder
+            .build_call(func, &args, "call")
+            .try_as_basic_value()
+            .left()
+            .unwrap()
+            .into_float_value()
+    }
+
+    fn codegen_if<'a>(
+        if_expr: &'a ExprAST,
+        context: &'a Context,
+        module: &Module<'a>,
+        builder: &'a Builder,
+        params: &Vec<FloatValue<'a>>,
+    ) -> FloatValue<'a> {
+        let (cond, then, els) = match if_expr {
+            ExprAST::IfExpr { cond, then, els } => (cond, then, els),
+            _ => unreachable!(),
+        };
+        let cond = cond.codegen(context, module, builder, params);
+        let cond = builder.build_float_compare(
+            FloatPredicate::ONE,
+            cond,
+            context.f64_type().const_zero(),
+            "if_cond",
+        );
+
+        let func = builder.get_insert_block().unwrap().get_parent().unwrap();
+        let then_bb = context.append_basic_block(func, "then");
+        let else_bb = context.append_basic_block(func, "else");
+        let merge_bb = context.append_basic_block(func, "merge");
+        builder.build_conditional_branch(cond, then_bb, else_bb);
+
+        builder.position_at_end(then_bb);
+        let then = then.codegen(context, module, builder, params);
+        builder.build_unconditional_branch(merge_bb);
+        let then_bb = builder.get_insert_block().unwrap();
+
+        builder.position_at_end(else_bb);
+        let els = els.codegen(context, module, builder, params);
+        builder.build_unconditional_branch(merge_bb);
+        let else_bb = builder.get_insert_block().unwrap();
+
+        builder.position_at_end(merge_bb);
+        let phi = builder.build_phi(context.f64_type(), "if_merge");
+        phi.add_incoming(&[(&then, then_bb), (&els, else_bb)]);
+        phi.as_basic_value().into_float_value()
+    }
+
     fn codegen<'a>(
         &'a self,
         context: &'a Context,
@@ -262,45 +390,16 @@ impl ExprAST {
         params: &Vec<FloatValue<'a>>,
     ) -> FloatValue {
         match self {
-            Self::Num(n) => context.f64_type().const_float(*n),
-            Self::Var { name } => *params
-                .iter()
-                .find(|&p| p.get_name().to_str().unwrap() == name)
-                .unwrap_or_else(|| panic!("undefined variable: {}", name)),
-            Self::BinExpr { lhs, op, rhs } => {
-                let lhs = lhs.codegen(context, module, builder, params);
-                let rhs = rhs.codegen(context, module, builder, params);
-                match op {
-                    BinOp::Add => builder.build_float_add(lhs, rhs, "sum"),
-                    BinOp::Sub => builder.build_float_sub(lhs, rhs, "diff"),
-                    BinOp::Multi => builder.build_float_mul(lhs, rhs, "prod"),
-                    BinOp::Less => {
-                        let temp =
-                            builder.build_float_compare(FloatPredicate::ULT, lhs, rhs, "temp");
-                        builder.build_unsigned_int_to_float(temp, context.f64_type(), "cmp")
-                    }
-                }
+            Self::Num(n) => ExprAST::codegen_num(*n, context),
+            Self::Var { name } => ExprAST::codegen_var(name, params),
+            bin_expr @ Self::BinExpr { .. } => {
+                ExprAST::codegen_bin(bin_expr, context, module, builder, params)
             }
-            Self::CallExpr { name, args } => {
-                let func = module
-                    .get_function(name)
-                    .unwrap_or_else(|| panic!("undefined function: {}", name));
-                if func.count_params() as usize != args.len() {
-                    panic!(
-                        "number of parameters does not match, in the call to function {}",
-                        name
-                    );
-                }
-                let args: Vec<BasicMetadataValueEnum> = args
-                    .iter()
-                    .map(|a| a.codegen(context, module, builder, params).into())
-                    .collect();
-                builder
-                    .build_call(func, &args, "call")
-                    .try_as_basic_value()
-                    .left()
-                    .unwrap()
-                    .into_float_value()
+            call_expr @ Self::CallExpr { .. } => {
+                ExprAST::codegen_call(call_expr, context, module, builder, params)
+            }
+            if_expr @ Self::IfExpr { .. } => {
+                ExprAST::codegen_if(if_expr, context, module, builder, params)
             }
         }
     }
@@ -370,5 +469,21 @@ mod tests {
         let s = "fun(a, (b))";
         let mut parser = Parser::new(s);
         println!("{:?}", parser.parse_prototype());
+    }
+
+    #[test]
+    #[should_panic]
+    fn parse_expr4() {
+        let s = "if 1 then 2";
+        let mut parser = Parser::new(s);
+        println!("{:?}", parser.parse_expr());
+    }
+
+    #[test]
+    #[should_panic]
+    fn parse_expr5() {
+        let s = "if 1 2";
+        let mut parser = Parser::new(s);
+        println!("{:?}", parser.parse_expr());
     }
 }

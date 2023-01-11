@@ -9,14 +9,14 @@ Compiler for the toy language Kaleidoscopic (modified)
 extern sin(x)
 
 # function definition
-def foo(a, b)
-    a*a - 2*a*b + b*b
+def fib(n)
+    if n < 3 then
+        1
+    else
+        fib(n-1) + fib(n-2)
 
-def bar(x)
-    (x+1) * (x-1)
-
-# a expression to be evaluated, optional
-find sin(foo(2,bar(1)))
+# an expression to be evaluated, optional
+find fib(10)
 ```
 
 Features:
