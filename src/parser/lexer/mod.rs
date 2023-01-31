@@ -2,7 +2,7 @@ use std::{ops::Deref, str::Chars};
 
 use itertools::Itertools;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum BinOp {
     Add,
     Sub,
